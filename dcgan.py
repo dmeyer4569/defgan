@@ -7,6 +7,7 @@ from torchvision.utils import save_image
 from torch.utils.data import DataLoader, Dataset
 from torch.autograd import Variable
 from PIL import Image
+from datetime import datetime
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -73,7 +74,7 @@ def weights_init_normal(m):
 class Generator(nn.Module):
     def __init__(self):
         super(Generator, self).__init__()
-        self.init_size = opt.img_size // 4 # 3 upsampling layers = /8
+        self.init_size = opt.img_size // 8 # 3 upsampling layers = /8
         self.l1 = nn.Sequential(nn.Linear(opt.latent_dim, 128 * self.init_size ** 2))
 
         self.conv_blocks = nn.Sequential(
@@ -89,8 +90,8 @@ class Generator(nn.Module):
             nn.LeakyReLU(0.2, inplace=True),
 
             nn.Upsample(scale_factor=2),                            # 16x16 -> 32x32
-            nn.Conv2d(128, 64, 3, stride=1, padding=1),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(64, 64, 3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
             nn.LeakyReLU(0.2, inplace=True),
 
 
@@ -121,6 +122,7 @@ class Generator(nn.Module):
 
     def forward(self, z):
         out = self.l1(z)
+        #print(f"Shape before conv_blocks: {out.shape}")
         out = out.view(out.size(0), 128, self.init_size, self.init_size)
         img = self.conv_blocks(out)
         return img
@@ -225,6 +227,7 @@ Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 # Training
 # -------------------------------
 for epoch in range(opt.n_epochs):
+    saved = 0
     for i, (imgs, _) in enumerate(dataloader):
 
 
@@ -255,8 +258,11 @@ for epoch in range(opt.n_epochs):
         batches_done = epoch * len(dataloader) + i
         if i == 0:
             save_image(gen_imgs.data[:25], f"images/epoch_{epoch}.png", nrow=5, normalize=True)
-        if epoch % 1 == 0 or epoch == opt.n_epochs - 1: 
+        if epoch == opt.n_epochs - 1 and saved == 0:
+            saved=+1
             os.makedirs("checkpoints", exist_ok=True)
-            torch.save(generator.state_dict(), f"checkpoints/generator_epoch_{epoch}.pth")
-            torch.save(discriminator.state_dict(), f"checkpoints/discriminator_epoch_{epoch}.pth")
+            savetime =  datetime.now()
+            formatted_time = savetime.strftime("%H-%M-%S")
+            torch.save(generator.state_dict(), f"checkpoints/generator_epoch_{epoch}_{formatted_time}.pth")
+            torch.save(discriminator.state_dict(), f"checkpoints/discriminator_epoch_{epoch}_{formatted_time}.pth")
                        
