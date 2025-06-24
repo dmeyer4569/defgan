@@ -88,6 +88,11 @@ class Generator(nn.Module):
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.2, inplace=True),
 
+            nn.Upsample(scale_factor=2),                            # 16x16 -> 32x32
+            nn.Conv2d(128, 64, 3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2, inplace=True),
+
 
 
             nn.Conv2d(64, opt.channels, 3, stride=1, padding=1),
@@ -136,9 +141,10 @@ class Discriminator(nn.Module):
             return block
 
         self.model = nn.Sequential(
-            *discriminator_block(opt.channels, 64, bn=False),       #16 -> 8
-            *discriminator_block(64,128),                           # 8 -> 4
-            *discriminator_block(128,256),                          # 4 -> 2
+            *discriminator_block(opt.channels, 64, bn=False),       # 32 -> 16
+            *discriminator_block(64,128),                           # 16 -> 8
+            *discriminator_block(128,256),                          # 8 -> 4
+            *discriminator_block(256,512),                          # 4 -> 2
             )
 
         """
@@ -151,8 +157,8 @@ class Discriminator(nn.Module):
         """
     
 
-        ds_size = opt.img_size // 2 ** 3
-        self.adv_layer = nn.Sequential(nn.Linear(256 * ds_size * ds_size, 1), nn.Sigmoid())
+        ds_size = opt.img_size // 2 ** 4
+        self.adv_layer = nn.Sequential(nn.Linear(512 * ds_size * ds_size, 1), nn.Sigmoid())
 
     def forward(self, img):
         out = self.model(img)
