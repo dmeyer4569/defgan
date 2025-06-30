@@ -74,57 +74,33 @@ def weights_init_normal(m):
 class Generator(nn.Module):
     def __init__(self):
         super(Generator, self).__init__()
-        self.init_size = opt.img_size // 8 # 3 upsampling layers = /8
-        self.l1 = nn.Sequential(nn.Linear(opt.latent_dim, 128 * self.init_size ** 2))
+        if opt.img_size == 128:
+            self.init_size = 4  # 4x4, 5 upsamplings to 128x128
+        elif opt.img_size == 64:
+            self.init_size = 2  # 2x2, 5 upsamplings to 64x64
+        else:
+            self.init_size = max(1, opt.img_size // 32)  # fallback
+        self.l1 = nn.Sequential(nn.Linear(opt.latent_dim, 1024 * self.init_size ** 2))
 
-        self.conv_blocks = nn.Sequential(
-            nn.BatchNorm2d(128),
-            nn.Upsample(scale_factor=2),                            # 4x4 -> 8x8
-            nn.Conv2d(128, 128, 3, stride=1, padding=1),
-            nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2, inplace=True),
-
-            nn.Upsample(scale_factor=2),                            # 8x8 -> 16x16
-            nn.Conv2d(128, 64, 3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2, inplace=True),
-
-            nn.Upsample(scale_factor=2),                            # 16x16 -> 32x32
-            nn.Conv2d(64, 64, 3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2, inplace=True),
-
-
-
-            nn.Conv2d(64, opt.channels, 3, stride=1, padding=1),
-            nn.Tanh()
-            )
-
-
-        """
-            nn.BatchNorm2d(128),
-            nn.Upsample(scale_factor=2),                            # -> 128x128
-            nn.Conv2d(128, 128, 3, stride=1, padding=1),
-            nn.BatchNorm2d(128, 0.8),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Upsample(scale_factor=2),                            # -> 256x256
-            nn.Conv2d(128, 64, 3, stride=1, padding=1),
-            nn.BatchNorm2d(64, 0.8),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Upsample(scale_factor=2),                            # -> 512x512
-            nn.Conv2d(64, 32, 3, stride=1, padding=1),
-            nn.BatchNorm2d(32, 0.8),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(32, opt.channels, 3, stride=1, padding=1),
-            nn.Tanh()
-            )
-        """
+        up_blocks = []
+        in_channels = 1024
+        out_channels_list = [512, 256, 128, 64, 32]
+        for out_channels in out_channels_list:
+            up_blocks.append(nn.Upsample(scale_factor=2))
+            up_blocks.append(nn.Conv2d(in_channels, out_channels, 3, stride=1, padding=1))
+            up_blocks.append(nn.BatchNorm2d(out_channels))
+            up_blocks.append(nn.LeakyReLU(0.2, inplace=True))
+            in_channels = out_channels
+        up_blocks.append(nn.Conv2d(in_channels, opt.channels, 3, stride=1, padding=1))
+        up_blocks.append(nn.Tanh())
+        self.conv_blocks = nn.Sequential(*up_blocks)
 
     def forward(self, z):
         out = self.l1(z)
-        #print(f"Shape before conv_blocks: {out.shape}")
-        out = out.view(out.size(0), 128, self.init_size, self.init_size)
+        #print(f"generator, Shape before conv_blocks: {out.shape}")
+        out = out.view(out.size(0), 1024, self.init_size, self.init_size)
         img = self.conv_blocks(out)
+        #print(f"generator, output shape: {img.shape}")  # Debug: print generated image shape
         return img
 
 # -------------------------------
@@ -133,7 +109,7 @@ class Generator(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
-
+    
         def discriminator_block(in_filters, out_filters, bn=True):
             block = [nn.Conv2d(in_filters, out_filters, 3, 2, 1),
                      nn.LeakyReLU(0.2, inplace=True),
@@ -143,28 +119,45 @@ class Discriminator(nn.Module):
             return block
 
         self.model = nn.Sequential(
-            *discriminator_block(opt.channels, 64, bn=False),       # 32 -> 16
-            *discriminator_block(64,128),                           # 16 -> 8
-            *discriminator_block(128,256),                          # 8 -> 4
-            *discriminator_block(256,512),                          # 4 -> 2
+            *discriminator_block(opt.channels, 32, bn=False),       # 128 -> 64
+            *discriminator_block(32,64),                            # 64 -> 32
+            *discriminator_block(64,128),                           # 32 -> 16
+            *discriminator_block(128,256),                          # 16 -> 8
+            *discriminator_block(256,512),                          # 8 -> 4
+            *discriminator_block(512, 1024),                        # 4 -> 2 (removed for 128x128 input)
+        )
+        # For 128x128 input, use only 5 downsampling blocks so output is 4x4 -> 2x2
+        if opt.img_size == 128:
+            self.model = nn.Sequential(
+                *discriminator_block(opt.channels, 32, bn=False),   # 128 -> 64
+                *discriminator_block(32,64),                        # 64 -> 32
+                *discriminator_block(64,128),                       # 32 -> 16
+                *discriminator_block(128,256),                      # 16 -> 8
+                *discriminator_block(256,512),                      # 8 -> 4
             )
-
-        """
-            *discriminator_block(opt.channels, 16, bn=False),   # 256 -> 128
-            *discriminator_block(16, 32),                       # 128 -> 64
-            *discriminator_block(32, 64),                       # 64 -> 32
-            *discriminator_block(64, 128),                      # 32 -> 16
-            *discriminator_block(128, 256)                      # 16 -> 8
+            ds_size = 4  # Output is 4x4 after 5 downsamples for 128x128 input
+            adv_in_channels = 512  # Output channels after last block
+            self.adv_layer = nn.Sequential(nn.Linear(adv_in_channels * ds_size * ds_size, 1), nn.Sigmoid())  # 512*4*4=8192
+        else:
+            self.model = nn.Sequential(
+                *discriminator_block(opt.channels, 32, bn=False),   # 64/other -> 32
+                *discriminator_block(32,64),                        # 32 -> 16
+                *discriminator_block(64,128),                       # 16 -> 8
+                *discriminator_block(128,256),                      # 8 -> 4
+                *discriminator_block(256,512),                      # 4 -> 2
+                *discriminator_block(512, 1024),                    # 2 -> 1
             )
-        """
-    
-
-        ds_size = opt.img_size // 2 ** 4
-        self.adv_layer = nn.Sequential(nn.Linear(512 * ds_size * ds_size, 1), nn.Sigmoid())
+            ds_size = opt.img_size // (2 ** 6)
+            if ds_size < 1:
+                ds_size = 1  # Ensure ds_size is at least 1
+            adv_in_channels = 1024  # Output channels after last block
+            self.adv_layer = nn.Sequential(nn.Linear(adv_in_channels * ds_size * ds_size, 1), nn.Sigmoid())
 
     def forward(self, img):
         out = self.model(img)
+        #print(f"discriminator, shape after conv_blocks: {out.shape}")  # Print actual output shape for debugging
         out = out.view(out.size(0), -1)
+        #print(f"discriminator, flattened shape: {out.shape}")  # Debug flattened shape
         validity = self.adv_layer(out)
         return validity
 
@@ -265,4 +258,4 @@ for epoch in range(opt.n_epochs):
             formatted_time = savetime.strftime("%H-%M-%S")
             torch.save(generator.state_dict(), f"checkpoints/generator_epoch_{epoch}_{formatted_time}.pth")
             torch.save(discriminator.state_dict(), f"checkpoints/discriminator_epoch_{epoch}_{formatted_time}.pth")
-                       
+
